@@ -85,6 +85,18 @@ class AppDelegate: NSObject,
     /// The dock menu
     private var dockMenu: NSMenu = NSMenu()
 
+    private lazy var menuPreviousTab = NSMenuItem(
+        title: "Previous Tab",
+        action: #selector(BaseTerminalController.previousTab(_:)),
+        keyEquivalent: ""
+    )
+
+    private lazy var menuNextTab = NSMenuItem(
+        title: "Next Tab",
+        action: #selector(BaseTerminalController.nextTab(_:)),
+        keyEquivalent: ""
+    )
+
     /// This is only true before application has become active.
     private var applicationHasBecomeActive: Bool = false
 
@@ -1095,6 +1107,18 @@ class AppDelegate: NSObject,
 // MARK: Menu
 
 extension AppDelegate {
+    private func ensureTabShortcutMenuItems() {
+        guard let windowMenu = menuNewTab?.menu,
+              let newTab = menuNewTab else { return }
+
+        if menuPreviousTab.menu == nil {
+            windowMenu.insertItem(menuPreviousTab, at: windowMenu.index(of: newTab) + 1)
+        }
+        if menuNextTab.menu == nil {
+            windowMenu.insertItem(menuNextTab, at: windowMenu.index(of: menuPreviousTab) + 1)
+        }
+    }
+
     /// This is called for the dock right-click menu.
     func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
         return dockMenu
@@ -1111,6 +1135,8 @@ extension AppDelegate {
 
     /// Setup all the images for our menu items.
     private func setupMenuImages() {
+        ensureTabShortcutMenuItems()
+
         // Note: This COULD Be done all in the xib file, but I find it easier to
         // modify this stuff as code.
         self.menuAbout?.setImageIfDesired(systemSymbolName: "info.circle")
@@ -1120,6 +1146,8 @@ extension AppDelegate {
         self.menuSecureInput?.setImageIfDesired(systemSymbolName: "lock.display")
         self.menuNewWindow?.setImageIfDesired(systemSymbolName: "macwindow.badge.plus")
         self.menuNewTab?.setImageIfDesired(systemSymbolName: "macwindow")
+        self.menuPreviousTab.setImageIfDesired(systemSymbolName: "chevron.backward")
+        self.menuNextTab.setImageIfDesired(systemSymbolName: "chevron.forward")
         self.menuSplitRight?.setImageIfDesired(systemSymbolName: "rectangle.righthalf.inset.filled")
         self.menuSplitLeft?.setImageIfDesired(systemSymbolName: "rectangle.leadinghalf.inset.filled")
         self.menuSplitUp?.setImageIfDesired(systemSymbolName: "rectangle.tophalf.inset.filled")
@@ -1156,6 +1184,7 @@ extension AppDelegate {
     /// Sync all of our menu item keyboard shortcuts with the Ghostty configuration.
     @MainActor private func syncMenuShortcuts(_ config: Ghostty.Config) {
         guard ghostty.readiness == .ready else { return }
+        ensureTabShortcutMenuItems()
 
         menuShortcutManager.reset()
 
@@ -1166,6 +1195,8 @@ extension AppDelegate {
 
         syncMenuShortcut(config, action: "new_window", menuItem: self.menuNewWindow)
         syncMenuShortcut(config, action: "new_tab", menuItem: self.menuNewTab)
+        syncMenuShortcut(config, action: "previous_tab", menuItem: self.menuPreviousTab)
+        syncMenuShortcut(config, action: "next_tab", menuItem: self.menuNextTab)
         syncMenuShortcut(config, action: "close_surface", menuItem: self.menuClose)
         syncMenuShortcut(config, action: "close_tab", menuItem: self.menuCloseTab)
         syncMenuShortcut(config, action: "close_window", menuItem: self.menuCloseWindow)
