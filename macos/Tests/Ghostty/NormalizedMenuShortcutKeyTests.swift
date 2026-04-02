@@ -47,6 +47,13 @@ struct NormalizedMenuShortcutKeyTests {
         #expect(key?.modifierFlags == expected)
     }
 
+    @Test func shiftedPunctuationPreservesShift() {
+        let key = Key(keyEquivalent: "[", modifiers: [.command, .shift])
+        let expected = NSEvent.ModifierFlags([.command, .shift]).rawValue
+        #expect(key?.keyEquivalent == "[")
+        #expect(key?.modifiersRawValue == expected)
+    }
+
     // MARK: - Equality / Hashing
 
     @Test func sameKeyAndModsAreEqual() {
