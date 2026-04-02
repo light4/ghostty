@@ -200,6 +200,20 @@ extension Ghostty {
             }
         }
 
+        func previousTab(surface: ghostty_surface_t) {
+            let action = "previous_tab"
+            if !ghostty_surface_binding_action(surface, action, UInt(action.lengthOfBytes(using: .utf8))) {
+                logger.warning("action failed action=\(action)")
+            }
+        }
+
+        func nextTab(surface: ghostty_surface_t) {
+            let action = "next_tab"
+            if !ghostty_surface_binding_action(surface, action, UInt(action.lengthOfBytes(using: .utf8))) {
+                logger.warning("action failed action=\(action)")
+            }
+        }
+
         func split(surface: ghostty_surface_t, direction: ghostty_action_split_direction_e) {
             ghostty_surface_split(surface, direction)
         }
