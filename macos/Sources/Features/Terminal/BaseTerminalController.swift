@@ -1332,6 +1332,16 @@ class BaseTerminalController: NSWindowController,
         promptTabTitle()
     }
 
+    @IBAction func previousTab(_ sender: Any?) {
+        guard let surface = focusedSurface?.surface else { return }
+        ghostty.previousTab(surface: surface)
+    }
+
+    @IBAction func nextTab(_ sender: Any?) {
+        guard let surface = focusedSurface?.surface else { return }
+        ghostty.nextTab(surface: surface)
+    }
+
     @IBAction func splitRight(_ sender: Any) {
         guard let surface = focusedSurface?.surface else { return }
         ghostty.split(surface: surface, direction: GHOSTTY_SPLIT_DIRECTION_RIGHT)
