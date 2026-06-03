@@ -19,6 +19,15 @@ def main [
         []
     }
 
+    # Keep -fprofile-instr-generate (Clang) and -profile-generate (Swift)
+    # out of non-test builds. Coverage instrumentation should only be
+    # active for the `test` action.
+    let coverage_overrides = if $action == "test" {
+        []
+    } else {
+        [ENABLE_CODE_COVERAGE=NO CLANG_COVERAGE_MAPPING=NO]
+    }
+
     (^env -i
         $"HOME=($env.HOME)"
         "PATH=/usr/bin:/bin:/usr/sbin:/sbin"
@@ -28,5 +37,6 @@ def main [
         -configuration $configuration
         $"SYMROOT=($build_dir)"
         ...$skip_testing
+        ...$coverage_overrides
         $action)
 }
