@@ -46,6 +46,9 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
     /// changes in the list.
     private var tabWindowsHash: Int = 0
 
+    /// Return to the tab that created this one when closing the selected tab.
+    private weak var parentTabWindow: NSWindow?
+
     /// The initial window presentation is deferred by one runloop turn in a few places so
     /// AppKit can settle tab/window state first. Close actions must cancel it to avoid
     /// re-showing a tab/window that was already closed.
@@ -182,7 +185,7 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
 
         // If our surface tree is now nil then we close our window.
         if to.isEmpty {
-            self.window?.close()
+            closeTabWindow()
         }
     }
 
@@ -481,6 +484,8 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
                 tabCreated = parent.addTabbedWindowSafely(window, ordered: .above)
             }
             if tabCreated {
+                controller.parentTabWindow = parent
+
                 // We set the selectedWindow early here because we want the next window
                 // to become first responder as quickly as possible. Usually this is
                 // set while `-[NSWindowController showWindow:]` is called, but we're
@@ -749,6 +754,21 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
                     }
                 }
             }
+        }
+
+        closeTabWindow()
+    }
+
+    private func closeTabWindow() {
+        guard let window else { return }
+
+        // Select the source before close(): AppKit has already selected an
+        // adjacent replacement by the time windowWillClose is called.
+        if let tabGroup = window.tabGroup,
+           tabGroup.selectedWindow === window,
+           let parentTabWindow,
+           tabGroup.windows.contains(where: { $0 === parentTabWindow }) {
+            tabGroup.selectedWindow = parentTabWindow
         }
 
         window.close()
