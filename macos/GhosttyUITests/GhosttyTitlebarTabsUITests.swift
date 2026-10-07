@@ -108,6 +108,54 @@ final class GhosttyTitlebarTabsUITests: GhosttyCustomConfigCase {
         checkTabsGeometry(app.windows.firstMatch)
     }
 
+    @MainActor
+    func testClosingNewTabReturnsToSourceTab() throws {
+        try checkClosingNewTabReturnsToSourceTab(position: "current")
+    }
+
+    @MainActor
+    func testClosingNewTabAtEndReturnsToSourceTab() throws {
+        try checkClosingNewTabReturnsToSourceTab(position: "end")
+    }
+
+    @MainActor
+    private func checkClosingNewTabReturnsToSourceTab(position: String) throws {
+        try updateConfig(
+            """
+            macos-titlebar-style = tabs
+            window-new-tab-position = \(position)
+            command = /bin/sh
+            shell-integration = none
+            """
+        )
+        let app = try ghosttyApplication()
+        app.launch()
+        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 5))
+
+        app.typeKey("t", modifierFlags: .command)
+        app.typeKey("t", modifierFlags: .command)
+        XCTAssertTrue(app.wait(for: \.tabs.count, toEqual: 3, timeout: 5))
+
+        app.typeKey("2", modifierFlags: .command)
+        XCTAssertTrue(app.tabs.element(boundBy: 1).wait(for: \.isSelected, toEqual: true, timeout: 5))
+        app.typeKey("t", modifierFlags: .command)
+        XCTAssertTrue(app.wait(for: \.tabs.count, toEqual: 4, timeout: 5))
+        let newTabIndex = position == "current" ? 2 : 3
+        XCTAssertTrue(app.tabs.element(boundBy: newTabIndex).wait(for: \.isSelected, toEqual: true, timeout: 5))
+
+        // Exiting the shell must return to tab 2, not the adjacent tab 3.
+        app.typeKey("d", modifierFlags: .control)
+        XCTAssertTrue(app.wait(for: \.tabs.count, toEqual: 3, timeout: 5))
+        XCTAssertTrue(app.tabs.element(boundBy: 1).wait(for: \.isSelected, toEqual: true, timeout: 5))
+
+        // Closing via the menu shortcut must follow the same focus policy.
+        app.typeKey("t", modifierFlags: .command)
+        XCTAssertTrue(app.wait(for: \.tabs.count, toEqual: 4, timeout: 5))
+        app.typeKey("w", modifierFlags: .command)
+        XCTAssertTrue(app.wait(for: \.tabs.count, toEqual: 3, timeout: 5))
+        XCTAssertTrue(app.tabs.element(boundBy: 1).wait(for: \.isSelected, toEqual: true, timeout: 5))
+    }
+
     func checkTabsGeometry(_ window: XCUIElement) {
         let closeTabButtons = window.buttons.matching(identifier: "_closeButton")
 
