@@ -215,10 +215,10 @@ extension Ghostty {
         // Timer to remove progress report after 15 seconds
         private var progressReportTimer: Timer?
 
-        /// Cache verified Pi metadata while the process is alive. AppKit can encode
-        /// after Pi has already unregistered during shutdown, so don't query then.
-        private(set) var piSession: PiSession?
-        private var piSessionTimer: Timer?
+        /// Cache verified native session metadata while its process is alive.
+        /// AppKit may encode after the foreground process exits during shutdown.
+        private(set) var terminalSession: TerminalSession?
+        private var terminalSessionTimer: Timer?
 
         // This is the title from the terminal. This is nil if we're currently using
         // the terminal title as the main title property. If the title is set manually
@@ -400,11 +400,13 @@ extension Ghostty {
             }
             self.surfaceModel = Ghostty.Surface(cSurface: surface)
 
-            // Track /new and /resume as well as Pi starting or exiting. Mark the
-            // window dirty only when the verified session actually changes.
-            piSessionTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
-                self?.updatePiSession()
+            // Mark the window dirty only when its verified native session changes.
+            let sessionTimer = Timer(timeInterval: 2, repeats: true) { [weak self] _ in
+                self?.updateTerminalSession()
             }
+            terminalSessionTimer = sessionTimer
+            // Keep tracking session switches while AppKit is in menu/event tracking.
+            RunLoop.main.add(sessionTimer, forMode: .common)
 
             // Setup our tracking area so we get mouse moved events
             updateTrackingAreas()
@@ -447,7 +449,7 @@ extension Ghostty {
 
             // Cancel progress report timer
             progressReportTimer?.invalidate()
-            piSessionTimer?.invalidate()
+            terminalSessionTimer?.invalidate()
         }
 
         override func endSearch() {
@@ -1870,13 +1872,13 @@ extension Ghostty {
             }
         }
 
-        private func updatePiSession() {
-            let session = PiSession.current(for: surfaceModel)
-            guard session != piSession else { return }
-            piSession = session
+        private func updateTerminalSession() {
+            let session = TerminalSession.current(for: surfaceModel, cwd: pwd)
+            guard session != terminalSession else { return }
+            terminalSession = session
             invalidateRestorableState()
             window?.invalidateRestorableState()
-            (window?.windowController as? TerminalController)?.piSessionDidChange()
+            (window?.windowController as? TerminalController)?.terminalSessionDidChange()
         }
 
         // MARK: - Codable
@@ -1886,7 +1888,7 @@ extension Ghostty {
             case uuid
             case title
             case isUserSetTitle
-            case piSession
+            case terminalSession
         }
 
         required convenience init(from decoder: Decoder) throws {
@@ -1903,18 +1905,17 @@ extension Ghostty {
             config.workingDirectory = try container.decode(String?.self, forKey: .pwd)
             let savedTitle = try container.decodeIfPresent(String.self, forKey: .title)
             let isUserSetTitle = try container.decodeIfPresent(Bool.self, forKey: .isUserSetTitle) ?? false
-            // Optional metadata keeps pre-Pi restoration archives compatible.
             // A missing or invalid session must never prevent the shell restoring.
             do {
-                if let session = try container.decodeIfPresent(PiSession.self, forKey: .piSession) {
-                    if session.isValid, session.cwd == config.workingDirectory {
-                        config.initialInput = "pi --session \(Ghostty.Shell.quote(session.sessionFile))\n"
+                if let session = try container.decodeIfPresent(TerminalSession.self, forKey: .terminalSession) {
+                    if session.cwd == config.workingDirectory, let command = session.resumeCommand {
+                        config.initialInput = command + "\n"
                     } else {
-                        AppDelegate.logger.warning("Pi session unavailable; restoring a shell instead")
+                        AppDelegate.logger.warning("Session unavailable; restoring a shell instead")
                     }
                 }
             } catch {
-                AppDelegate.logger.warning("Invalid Pi restoration metadata; restoring a shell instead")
+                AppDelegate.logger.warning("Invalid session restoration metadata; restoring a shell instead")
             }
 
             self.init(app, baseConfig: config, uuid: uuid)
@@ -1935,7 +1936,13 @@ extension Ghostty {
             try container.encode(id.uuidString, forKey: .uuid)
             try container.encode(title, forKey: .title)
             try container.encode(titleFromTerminal != nil, forKey: .isUserSetTitle)
-            try container.encodeIfPresent(piSession, forKey: .piSession)
+            // Capture a session started or switched since the last timer tick.
+            // Retain the verified cache only when the foreground process is gone;
+            // a live shell or an ambiguous tool must not resurrect a stale session.
+            let session = surfaceModel?.foregroundPID == nil
+                ? terminalSession
+                : TerminalSession.current(for: surfaceModel, cwd: pwd)
+            try container.encodeIfPresent(session, forKey: .terminalSession)
         }
     }
 }
@@ -1943,21 +1950,11 @@ extension Ghostty {
 // MARK: - Pi Session Restoration
 
 extension Ghostty {
-    /// Only Pi sessions are resumable; arbitrary terminal commands are never replayed.
-    struct PiSession: Codable, Equatable {
+    /// Validates the exact Pi transcript before generating a resume command.
+    struct PiSession {
         let sessionId: String
         let sessionFile: String
         let cwd: String
-
-        private struct Registry: Decodable {
-            struct Record: Decodable {
-                let sessionId: String
-                let sessionFile: String
-                let tty: String
-                let updatedAt: Double
-            }
-            let records: [Record]
-        }
 
         private struct Header: Decodable {
             let type: String
@@ -1982,57 +1979,6 @@ extension Ghostty {
                 AppDelegate.logger.debug("Cannot read Pi session header: \(error.localizedDescription)")
                 return false
             }
-        }
-
-        @MainActor
-        static func current(for surface: Ghostty.Surface?) -> Self? {
-            guard let surface, let tty = surface.ttyName,
-                  let foregroundPID = surface.foregroundPID,
-                  let pid = Int32(exactly: foregroundPID) else { return nil }
-            var info = proc_bsdinfo()
-            guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, Int32(MemoryLayout.size(ofValue: info)))
-                    == MemoryLayout.size(ofValue: info),
-                  info.pbi_uid == getuid(), isPiProcess(pid) else { return nil }
-
-            let registryURL = FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent(".pi/agent/pi-session-manager.json")
-            guard FileManager.default.fileExists(atPath: registryURL.path) else { return nil }
-            do {
-                let registry = try JSONDecoder().decode(Registry.self, from: Data(contentsOf: registryURL))
-                let startedAt = Double(info.pbi_start_tvsec) * 1000 + Double(info.pbi_start_tvusec) / 1000
-                // The registry is a cache and TTYs are reused. Never accept a record
-                // from before this foreground process was started.
-                guard let record = registry.records
-                    .filter({ $0.tty == tty && $0.updatedAt >= startedAt })
-                    .max(by: { $0.updatedAt < $1.updatedAt }) else { return nil }
-                let file = try FileHandle(forReadingFrom: URL(fileURLWithPath: record.sessionFile))
-                defer { file.closeFile() }
-                guard let data = try file.read(upToCount: 16 * 1024),
-                      let newline = data.firstIndex(of: 10) else { return nil }
-                let header = try JSONDecoder().decode(Header.self, from: Data(data[..<newline]))
-                let session = Self(sessionId: record.sessionId, sessionFile: record.sessionFile, cwd: header.cwd)
-                return session.isValid ? session : nil
-            } catch {
-                AppDelegate.logger.debug("Cannot resolve live Pi session: \(error.localizedDescription)")
-                return nil
-            }
-        }
-
-        /// Pi runs in Node, so proc_name is "node", not "pi". Inspect argv[0],
-        /// which Pi sets to "pi", without inspecting or persisting its environment.
-        private static func isPiProcess(_ pid: Int32) -> Bool {
-            var mib: [Int32] = [CTL_KERN, KERN_PROCARGS2, pid]
-            var size = 0
-            guard sysctl(&mib, 3, nil, &size, nil, 0) == 0,
-                  size > MemoryLayout<Int32>.size, size <= 1024 * 1024 else { return false }
-            var bytes = [UInt8](repeating: 0, count: size)
-            guard sysctl(&mib, 3, &bytes, &size, nil, 0) == 0 else { return false }
-            // Skip argc, the executable path and its NUL padding to reach argv[0].
-            let strings = bytes.prefix(size).dropFirst(MemoryLayout<Int32>.size)
-                .split(separator: 0, maxSplits: 2)
-            guard strings.count >= 2 else { return false }
-            let command = String(decoding: strings[1], as: UTF8.self)
-            return command == "pi" || command.hasPrefix("pi ")
         }
     }
 }
