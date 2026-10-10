@@ -65,6 +65,9 @@ class TerminalWindow: NSWindow {
         didSet {
             guard tabColor != oldValue else { return }
             tabColorIndicator.rootView = TabColorIndicatorView(tabColor: tabColor)
+            // The controller encodes tab metadata in willEncodeRestorableState.
+            // Invalidate it too so AppKit doesn't reuse its previous snapshot.
+            terminalController?.invalidateRestorableState()
             invalidateRestorableState()
         }
     }
