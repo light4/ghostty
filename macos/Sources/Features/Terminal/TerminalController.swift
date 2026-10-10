@@ -584,11 +584,19 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         /// ``TerminalController/focusedSurfaceDidChange(to:)``
     }
 
+    /// A verified Pi session can restore even when its tab was opened with a
+    /// custom command. Other custom commands remain non-restorable.
+    func piSessionDidChange() {
+        syncRestoration(ghostty.config)
+        invalidateRestorableState()
+    }
+
     /// Updates the loaded window's restoration policy from the app configuration.
     private func syncRestoration(_ config: Ghostty.Config) {
         guard isWindowLoaded, let window else { return }
         // Setting all three of these is required for restoration to work.
-        window.isRestorable = restorable && config.windowSaveState != "never"
+        let hasPiSession = surfaceTree.contains(where: { $0.piSession != nil })
+        window.isRestorable = (restorable || hasPiSession) && config.windowSaveState != "never"
         window.restorationClass = TerminalWindowRestoration.self
         window.identifier = .init(String(describing: TerminalWindowRestoration.self))
     }
