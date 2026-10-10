@@ -633,10 +633,14 @@ const Subprocess = struct {
         var env = cfg.env;
         errdefer env.deinit();
 
-        // If we have a resources dir then set our env var
+        // Export the actual resources for shell integration. Explicit overrides
+        // use GHOSTTY_RESOURCES_DIR_OVERRIDE and are never automatically set.
         if (cfg.resources_dir) |dir| {
             log.info("found Ghostty resources dir: {s}", .{dir});
             try env.put("GHOSTTY_RESOURCES_DIR", dir);
+        } else {
+            _ = env.orderedRemove("GHOSTTY_RESOURCES_DIR");
+            _ = env.orderedRemove("TERMINFO");
         }
 
         // Set our TERM var. This is a bit complicated because we want to use
