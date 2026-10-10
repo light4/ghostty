@@ -10,6 +10,11 @@ README or [ghostty.org](https://ghostty.org/docs)
 
 ## Implementation Details
 
+Ghostty exports its actual resource directory as `GHOSTTY_RESOURCES_DIR` for shell
+integration. To explicitly override resource discovery when launching Ghostty, set
+`GHOSTTY_RESOURCES_DIR_OVERRIDE`. Without an override, Ghostty prefers its own
+bundled resources and uses `GHOSTTY_RESOURCES_DIR` only as a fallback.
+
 ### Bash
 
 Automatic [Bash](https://www.gnu.org/software/bash/) shell integration works by

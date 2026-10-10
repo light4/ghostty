@@ -20,9 +20,15 @@ for configuration files.
 
 : Defaults to `xterm-ghostty`. Can be configured with the `term` configuration option.
 
+**GHOSTTY_RESOURCES_DIR_OVERRIDE**
+
+: Explicit resource directory override, taking priority over bundled resources.
+Invalid directories are ignored with a warning.
+
 **GHOSTTY_RESOURCES_DIR**
 
-: Where the Ghostty resources can be found.
+: The actual resource directory exported to terminal subprocesses. When launching
+Ghostty, this is used only as a fallback if bundled resources cannot be found.
 
 **XDG_CONFIG_HOME**
 
