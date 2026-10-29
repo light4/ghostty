@@ -242,8 +242,10 @@ extension Ghostty {
             for _ in 0..<argc {
                 let start = index
                 while index < size && bytes[index] != 0 { index += 1 }
-                guard index < size else { return nil }
-                result.append(String(decoding: bytes[start..<index], as: UTF8.self))
+                // Reject invalid UTF-8 rather than matching a lossy repair.
+                guard index < size,
+                      let argument = String(bytes: bytes[start..<index], encoding: .utf8) else { return nil }
+                result.append(argument)
                 index += 1
             }
             return result
@@ -307,7 +309,8 @@ extension Ghostty {
                 }
                 guard process.terminationStatus == 0 else { return nil }
                 let data = output.fileHandleForReading.readDataToEndOfFile()
-                let matches = String(decoding: data, as: UTF8.self).split(separator: "\n").compactMap { row -> String? in
+                guard let text = String(bytes: data, encoding: .utf8) else { return nil }
+                let matches = text.split(separator: "\n").compactMap { row -> String? in
                     let fields = row.split(separator: "\t")
                     guard fields.count == 2, fields[0] == String(pid) else { return nil }
                     return String(fields[1])
