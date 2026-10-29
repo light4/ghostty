@@ -422,7 +422,11 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
     static func newTab(
         _ ghostty: Ghostty.App,
         from parent: NSWindow? = nil,
-        withBaseConfig baseConfig: Ghostty.SurfaceConfiguration? = nil
+        withBaseConfig baseConfig: Ghostty.SurfaceConfiguration? = nil,
+        withSurfaceTree tree: SplitTree<Ghostty.SurfaceView>? = nil,
+        adjacent: Bool = false,
+        actionName: String = "New Tab",
+        redo: (() -> Void)? = nil
     ) -> TerminalController? {
         // Making sure that we're dealing with a TerminalController. If not,
         // then we just create a new window.
@@ -445,7 +449,7 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         }
 
         // Create a new window and add it to the parent
-        let controller = TerminalController.init(ghostty, withBaseConfig: baseConfig)
+        let controller = TerminalController.init(ghostty, withBaseConfig: baseConfig, withSurfaceTree: tree)
         controller.isBackgroundOpaque = parentController.isBackgroundOpaque
         guard let window = controller.window else { return controller }
 
@@ -469,7 +473,7 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         if window.tabbingMode != .disallowed {
             let tabCreated: Bool
             // Add the window to the tab group and show it.
-            switch ghostty.config.windowNewTabPosition {
+            switch adjacent ? "current" : ghostty.config.windowNewTabPosition {
             case "end":
                 // If we already have a tab group and we want the new tab to open at the end,
                 // then we use the last window in the tab group as the parent.
@@ -530,7 +534,7 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
 
         // Setup our undo
         if let undoManager = parentController.undoManager {
-            undoManager.setActionName("New Tab")
+            undoManager.setActionName(actionName)
             undoManager.registerUndo(
                 withTarget: controller,
                 expiresAfter: controller.undoExpiration
@@ -541,14 +545,20 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
                 }
 
                 // Register redo action
+                // Surfaces from a provided tree are closed by the undo, so
+                // callers providing one must also provide a way to rebuild it.
                 undoManager.registerUndo(
                     withTarget: ghostty,
                     expiresAfter: target.undoExpiration
                 ) { ghostty in
-                    _ = TerminalController.newTab(
-                        ghostty,
-                        from: parent,
-                        withBaseConfig: baseConfig)
+                    if let redo {
+                        redo()
+                    } else {
+                        _ = TerminalController.newTab(
+                            ghostty,
+                            from: parent,
+                            withBaseConfig: baseConfig)
+                    }
                 }
             }
         }
@@ -1399,6 +1409,70 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         ) {
             self.closeOtherTabsImmediately()
         }
+    }
+
+    /// Opens a copy of this tab next to it, like a browser's "Duplicate Tab".
+    /// The split layout, working directories, title override and color are
+    /// kept; native sessions are forked when their tool supports it.
+    @IBAction func duplicateTab(_ sender: Any?) {
+        guard let window else { return }
+        // New tabs are unsupported in non-native fullscreen. Bail before
+        // creating surfaces, which would otherwise start their processes.
+        if let fullscreenStyle, fullscreenStyle.isFullscreen && !fullscreenStyle.supportsTabs {
+            NSSound.beep()
+            return
+        }
+        guard let (tree, focus) = makeDuplicateSurfaceTree() else { return }
+        let tabColor = (window as? TerminalWindow)?.tabColor ?? .none
+        let titleOverride = titleOverride
+        guard let controller = TerminalController.newTab(
+            ghostty,
+            from: window,
+            withSurfaceTree: tree,
+            adjacent: true,
+            actionName: "Duplicate Tab",
+            redo: { [weak self] in self?.duplicateTab(nil) }
+        ) else { return }
+
+        controller.titleOverride = titleOverride
+        (controller.window as? TerminalWindow)?.tabColor = tabColor
+        if let focus {
+            controller.focusedSurface = focus
+            DispatchQueue.main.async {
+                Ghostty.moveFocus(to: focus, from: nil)
+            }
+        }
+    }
+
+    /// Builds fresh surfaces with the same split layout as this tab. Returns
+    /// the copy of the focused surface so focus can be carried over as well.
+    private func makeDuplicateSurfaceTree() -> (SplitTree<Ghostty.SurfaceView>, Ghostty.SurfaceView?)? {
+        guard let app = ghostty.app, let root = surfaceTree.root else { return nil }
+        typealias Node = SplitTree<Ghostty.SurfaceView>.Node
+        var copies: [UUID: Ghostty.SurfaceView] = [:]
+
+        func copy(_ node: Node) -> Node {
+            switch node {
+            case .leaf(let view):
+                let surface = Ghostty.SurfaceView(app, baseConfig: view.duplicateConfiguration())
+                copies[view.id] = surface
+                return .leaf(view: surface)
+            case .split(let split):
+                return .split(.init(
+                    direction: split.direction,
+                    ratio: split.ratio,
+                    left: copy(split.left),
+                    right: copy(split.right)))
+            }
+        }
+
+        let newRoot = copy(root)
+        var zoomed: Node?
+        if case .leaf(let view)? = surfaceTree.zoomed, let surface = copies[view.id] {
+            zoomed = .leaf(view: surface)
+        }
+        let focus = focusedSurface.flatMap { copies[$0.id] }
+        return (SplitTree(root: newRoot, zoomed: zoomed), focus)
     }
 
     @IBAction func closeTabsOnTheRight(_ sender: Any?) {
