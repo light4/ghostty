@@ -7,6 +7,15 @@ extension Ghostty {
     struct TerminalSession: Codable, Equatable {
         enum Tool: String, Codable {
             case pi, claude, codex, copilot, tmux, zellij
+
+            /// Whether the tool can start an independent copy of a session.
+            /// tmux and Zellij can only attach, which mirrors the same session.
+            var supportsFork: Bool {
+                switch self {
+                case .pi, .claude, .codex: return true
+                case .copilot, .tmux, .zellij: return false
+                }
+            }
         }
 
         let tool: Tool
@@ -30,6 +39,7 @@ extension Ghostty {
         /// Returns a tool-specific command only after the session metadata has
         /// been verified. Tools without a native fork return nil for `.fork`.
         func command(for mode: Mode) -> String? {
+            guard mode == .resume || tool.supportsFork else { return nil }
             guard cwd.hasPrefix("/"), !sessionId.isEmpty,
                   cwd.rangeOfCharacter(from: .controlCharacters) == nil,
                   sessionId.rangeOfCharacter(from: .controlCharacters) == nil else { return nil }
@@ -53,26 +63,24 @@ extension Ghostty {
                 case (.claude, .fork): return "claude --resume \(target) --fork-session"
                 case (.codex, .resume): return "codex resume \(target)"
                 case (.codex, .fork): return "codex fork \(target)"
-                case (.copilot, .resume): return "copilot --resume=\(target)"
-                // Copilot has no fork; resuming would share one transcript.
-                default: return nil
+                default: return "copilot --resume=\(target)"
                 }
             case .tmux:
-                // Attaching mirrors the same session; it is not a copy.
-                guard mode == .resume else { return nil }
                 guard let socket, socket.hasPrefix("/"),
                       socket.rangeOfCharacter(from: .controlCharacters) == nil else { return nil }
                 // Attach only: never recreate or replay a dead server's commands.
                 return "tmux -S \(Ghostty.Shell.quote(socket)) attach-session -t \(target)"
             case .zellij:
-                guard mode == .resume else { return nil }
                 // Never use --force-run-commands when resurrecting a session.
                 return "zellij attach -- \(target)"
             }
         }
 
+        /// Identifies the verified session of the surface's foreground process.
+        /// For `.fork`, tools without fork support return nil before any
+        /// socket, transcript or subprocess query is made.
         @MainActor
-        static func current(for surface: Ghostty.Surface?, cwd: String?) -> Self? {
+        static func current(for surface: Ghostty.Surface?, cwd: String?, mode: Mode = .resume) -> Self? {
             guard let surface, let cwd, let foreground = surface.foregroundPID,
                   let pid = Int32(exactly: foreground) else { return nil }
             var info = proc_bsdinfo()
@@ -89,7 +97,7 @@ extension Ghostty {
             } else {
                 tool = Tool(rawValue: executable)
             }
-            guard let tool else { return nil }
+            guard let tool, mode == .resume || tool.supportsFork else { return nil }
             // Pi overwrites argv and closes its transcript after every append.
             // Its session-manager plugin provides the exact live TTY mapping.
             if tool == .pi {
@@ -112,6 +120,21 @@ extension Ghostty {
             let sessions = Set(paths.compactMap { transcript(tool: tool, path: $0, cwd: cwd) })
             guard sessions.count == 1 else { return nil }
             return sessions.first
+        }
+
+        /// Working directory of the surface's foreground process. This works
+        /// without shell integration, which is what reports `pwd` (OSC 7).
+        @MainActor
+        static func foregroundDirectory(for surface: Ghostty.Surface?) -> String? {
+            guard let foreground = surface?.foregroundPID,
+                  let pid = Int32(exactly: foreground) else { return nil }
+            var info = proc_vnodepathinfo()
+            let size = Int32(MemoryLayout.size(ofValue: info))
+            guard proc_pidinfo(pid, PROC_PIDVNODEPATHINFO, 0, &info, size) == size else { return nil }
+            let path = withUnsafePointer(to: &info.pvi_cdir.vip_path) {
+                $0.withMemoryRebound(to: CChar.self, capacity: Int(MAXPATHLEN)) { String(cString: $0) }
+            }
+            return path.hasPrefix("/") ? path : nil
         }
 
         private struct PiLiveRecord: Decodable {

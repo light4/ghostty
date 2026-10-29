@@ -1919,10 +1919,13 @@ extension Ghostty {
                 SurfaceConfiguration(from: ghostty_surface_inherited_config($0, GHOSTTY_SURFACE_CONTEXT_TAB))
             } ?? SurfaceConfiguration()
             // Duplicating always keeps the directory, regardless of the
-            // window-inherit-working-directory setting.
-            if let pwd { config.workingDirectory = pwd }
+            // tab-inherit-working-directory setting. Without shell integration
+            // there is no reported pwd, so ask the foreground process instead.
+            if let cwd = pwd ?? TerminalSession.foregroundDirectory(for: surfaceModel) {
+                config.workingDirectory = cwd
+            }
             if let cwd = config.workingDirectory,
-               let command = TerminalSession.current(for: surfaceModel, cwd: cwd)?.forkCommand {
+               let command = TerminalSession.current(for: surfaceModel, cwd: cwd, mode: .fork)?.forkCommand {
                 config.initialInput = command + "\n"
             }
             return config
