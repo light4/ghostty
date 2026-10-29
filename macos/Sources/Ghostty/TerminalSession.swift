@@ -16,7 +16,20 @@ extension Ghostty {
         // tmux servers can use custom sockets; preserve the exact server.
         var socket: String?
 
-        var resumeCommand: String? {
+        /// How a new terminal should reuse this session.
+        enum Mode {
+            /// Continue the same session, e.g. after window restoration.
+            case resume
+            /// Start an independent copy of the session, e.g. a duplicated tab.
+            case fork
+        }
+
+        var resumeCommand: String? { command(for: .resume) }
+        var forkCommand: String? { command(for: .fork) }
+
+        /// Returns a tool-specific command only after the session metadata has
+        /// been verified. Tools without a native fork return nil for `.fork`.
+        func command(for mode: Mode) -> String? {
             guard cwd.hasPrefix("/"), !sessionId.isEmpty,
                   cwd.rangeOfCharacter(from: .controlCharacters) == nil,
                   sessionId.rangeOfCharacter(from: .controlCharacters) == nil else { return nil }
@@ -27,21 +40,32 @@ extension Ghostty {
                       Ghostty.PiSession(sessionId: sessionId, sessionFile: sessionFile, cwd: cwd).isValid else {
                     return nil
                 }
-                return "pi --session \(Ghostty.Shell.quote(sessionFile))"
+                let file = Ghostty.Shell.quote(sessionFile)
+                switch mode {
+                case .resume: return "pi --session \(file)"
+                case .fork: return "pi --fork \(file)"
+                }
             case .claude, .codex, .copilot:
                 guard UUID(uuidString: sessionId) != nil, let sessionFile,
                       Self.transcript(tool: tool, path: sessionFile, cwd: cwd)?.sessionId == sessionId else { return nil }
-                switch tool {
-                case .claude: return "claude --resume \(target)"
-                case .codex: return "codex resume \(target)"
-                default: return "copilot --resume=\(target)"
+                switch (tool, mode) {
+                case (.claude, .resume): return "claude --resume \(target)"
+                case (.claude, .fork): return "claude --resume \(target) --fork-session"
+                case (.codex, .resume): return "codex resume \(target)"
+                case (.codex, .fork): return "codex fork \(target)"
+                case (.copilot, .resume): return "copilot --resume=\(target)"
+                // Copilot has no fork; resuming would share one transcript.
+                default: return nil
                 }
             case .tmux:
+                // Attaching mirrors the same session; it is not a copy.
+                guard mode == .resume else { return nil }
                 guard let socket, socket.hasPrefix("/"),
                       socket.rangeOfCharacter(from: .controlCharacters) == nil else { return nil }
                 // Attach only: never recreate or replay a dead server's commands.
                 return "tmux -S \(Ghostty.Shell.quote(socket)) attach-session -t \(target)"
             case .zellij:
+                guard mode == .resume else { return nil }
                 // Never use --force-run-commands when resurrecting a session.
                 return "zellij attach -- \(target)"
             }

@@ -760,6 +760,7 @@ private struct TabColorIndicatorView: View {
 
 extension TerminalWindow {
     private static let closeTabsOnRightMenuItemIdentifier = NSUserInterfaceItemIdentifier("com.mitchellh.ghostty.closeTabsOnTheRightMenuItem")
+    private static let duplicateTabMenuItemIdentifier = NSUserInterfaceItemIdentifier("com.mitchellh.ghostty.duplicateTabMenuItem")
     private static let changeTitleMenuItemIdentifier = NSUserInterfaceItemIdentifier("com.mitchellh.ghostty.changeTitleMenuItem")
     private static let tabColorSeparatorIdentifier = NSUserInterfaceItemIdentifier("com.mitchellh.ghostty.tabColorSeparator")
 
@@ -815,6 +816,7 @@ extension TerminalWindow {
     private func appendTabModifierSection(to menu: NSMenu, target: TerminalController?) {
         menu.removeItems(withIdentifiers: [
             Self.tabColorSeparatorIdentifier,
+            Self.duplicateTabMenuItemIdentifier,
             Self.changeTitleMenuItemIdentifier,
             Self.tabColorPaletteIdentifier
         ])
@@ -822,6 +824,13 @@ extension TerminalWindow {
         let separator = NSMenuItem.separator()
         separator.identifier = Self.tabColorSeparatorIdentifier
         menu.addItem(separator)
+
+        // Duplicate Tab
+        let duplicateItem = NSMenuItem(title: "Duplicate Tab", action: #selector(TerminalController.duplicateTab(_:)), keyEquivalent: "")
+        duplicateItem.identifier = Self.duplicateTabMenuItemIdentifier
+        duplicateItem.target = target
+        duplicateItem.setImageIfDesired(systemSymbolName: "plus.square.on.square")
+        menu.addItem(duplicateItem)
 
         // Rename Tab...
         let changeTitleItem = NSMenuItem(title: "Rename Tab...", action: #selector(TerminalWindow.renameTabFromContextMenu(_:)), keyEquivalent: "")

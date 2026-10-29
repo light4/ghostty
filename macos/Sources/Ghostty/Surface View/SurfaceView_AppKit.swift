@@ -1911,6 +1911,23 @@ extension Ghostty {
             (window?.windowController as? TerminalController)?.terminalSessionDidChange()
         }
 
+        /// Configuration for an equivalent surface in a duplicated tab. It keeps
+        /// the working directory and forks a verified native session when the
+        /// tool supports it; any other foreground process is never replayed.
+        func duplicateConfiguration() -> SurfaceConfiguration {
+            var config = surface.map {
+                SurfaceConfiguration(from: ghostty_surface_inherited_config($0, GHOSTTY_SURFACE_CONTEXT_TAB))
+            } ?? SurfaceConfiguration()
+            // Duplicating always keeps the directory, regardless of the
+            // window-inherit-working-directory setting.
+            if let pwd { config.workingDirectory = pwd }
+            if let cwd = config.workingDirectory,
+               let command = TerminalSession.current(for: surfaceModel, cwd: cwd)?.forkCommand {
+                config.initialInput = command + "\n"
+            }
+            return config
+        }
+
         // MARK: - Codable
 
         enum CodingKeys: String, CodingKey {
